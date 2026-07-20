@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const nodemailer = require("nodemailer");
 
 dotenv.config();
 
@@ -45,42 +44,58 @@ app.post("/send-otp", async (req, res) => {
   };
 
   try {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_APP_PASSWORD,
+    // Sends via Brevo's HTTP API (port 443) instead of direct SMTP
+    // (ports 465/587), since free-tier cloud hosts like Render block
+    // outbound SMTP traffic to prevent spam abuse.
+    const brevoResponse = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": process.env.BREVO_API_KEY,
+        "content-type": "application/json",
       },
+      body: JSON.stringify({
+        sender: {
+          name: "Eco Choice",
+          email: process.env.GMAIL_USER,
+        },
+        to: [{ email }],
+        subject: "EcoChoice Verification Code",
+        htmlContent: `
+          <div style="font-family:Arial,sans-serif;text-align:center;">
+            <h2>EcoChoice Email Verification</h2>
+
+            <p>Your verification code is:</p>
+
+            <h1 style="
+                font-size:40px;
+                letter-spacing:8px;
+                color:#2E7D32;">
+                ${otp}
+            </h1>
+
+            <p>This code expires in <strong>5 minutes</strong>.</p>
+
+            <hr>
+
+            <small>
+            If you didn't request this verification code,
+            you can safely ignore this email.
+            </small>
+          </div>
+        `,
+      }),
     });
 
-    await transporter.sendMail({
-      from: `"Eco Choice" <${process.env.GMAIL_USER}>`,
-      to: email,
-      subject: "EcoChoice Verification Code",
-      html: `
-        <div style="font-family:Arial,sans-serif;text-align:center;">
-          <h2>EcoChoice Email Verification</h2>
+    if (!brevoResponse.ok) {
+      const errorBody = await brevoResponse.text();
+      console.error("Brevo API error:", brevoResponse.status, errorBody);
 
-          <p>Your verification code is:</p>
-
-          <h1 style="
-              font-size:40px;
-              letter-spacing:8px;
-              color:#2E7D32;">
-              ${otp}
-          </h1>
-
-          <p>This code expires in <strong>5 minutes</strong>.</p>
-
-          <hr>
-
-          <small>
-          If you didn't request this verification code,
-          you can safely ignore this email.
-          </small>
-        </div>
-      `,
-    });
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send OTP.",
+      });
+    }
 
     console.log(`OTP for ${email}: ${otp}`);
 
@@ -156,5 +171,4 @@ const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📡 Accessible on your network at http://192.168.1.141:${PORT}`);
 });
